@@ -5,6 +5,8 @@ interface CheckoutFormProps {
   onPaymentComplete: (orderData: any) => void;
 }
 
+type BlockchainNetwork = 'ethereum' | 'binance';
+
 declare global {
   interface Window {
     ethereum?: any;
@@ -23,54 +25,31 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({ onPaymentComplete })
     country: ''
   });
   
-  const [isConnected, setIsConnected] = useState(false);
-  const [walletAddress, setWalletAddress] = useState('');
+  const [selectedNetwork, setSelectedNetwork] = useState<BlockchainNetwork>('ethereum');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [agreedToPrivacy, setAgreedToPrivacy] = useState(false);
 
-  // Recipient wallet address for payments
-  const RECIPIENT_WALLET = '0x742d35Cc6632C0532925a3b8D24E6745C4B5A23E';
-  const PAYMENT_AMOUNT = '1200'; // 1200 USDT
-
-  useEffect(() => {
-    checkWalletConnection();
-  }, []);
-
-  const checkWalletConnection = async () => {
-    if (typeof window.ethereum !== 'undefined') {
-      try {
-        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-        if (accounts.length > 0) {
-          setIsConnected(true);
-          setWalletAddress(accounts[0]);
-        }
-      } catch (error) {
-        console.error('Error checking wallet connection:', error);
-      }
-    }
-  };
-
-  const connectWallet = async () => {
-    if (typeof window.ethereum === 'undefined') {
-      setError('MetaMask is not installed. Please install MetaMask to continue.');
-      return;
-    }
-
-    try {
-      setError('');
-      const accounts = await window.ethereum.request({ 
-        method: 'eth_requestAccounts' 
-      });
-      
-      if (accounts.length > 0) {
-        setIsConnected(true);
-        setWalletAddress(accounts[0]);
-      }
-    } catch (error: any) {
-      setError('Failed to connect wallet. Please try again.');
-      console.error('Wallet connection error:', error);
+  // Network configurations
+  const networkConfig = {
+    ethereum: {
+      chainId: '0x1', // Ethereum Mainnet
+      chainName: 'Ethereum Mainnet',
+      usdtContract: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+      recipientWallet: '0x742d35Cc6632C0532925a3b8D24E6745C4B5A23E',
+      decimals: 6,
+      rpcUrl: 'https://mainnet.infura.io/v3/',
+      blockExplorer: 'https://etherscan.io'
+    },
+    binance: {
+      chainId: '0x38', // BSC Mainnet
+      chainName: 'Binance Smart Chain',
+      usdtContract: '0x55d398326f99059fF775485246999027B3197955',
+      recipientWallet: '0x742d35Cc6632C0532925a3b8D24E6745C4B5A23E',
+      decimals: 18,
+      rpcUrl: 'https://bsc-dataseed.binance.org/',
+      blockExplorer: 'https://bscscan.com'
     }
   };
 
@@ -84,15 +63,19 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({ onPaymentComplete })
 
   const isFormValid = () => {
     const requiredFields = ['fullName', 'email', 'phone', 'address', 'city', 'state', 'zipCode', 'country'];
-    return requiredFields.every(field => formData[field].trim() !== '') && 
-           isConnected && 
+    return requiredFields.every(field => formData[field].trim() !== '') &&
            agreedToTerms && 
            agreedToPrivacy;
   };
 
-  const handlePayment = async () => {
+  const handleConnectAndPay = async () => {
     if (!isFormValid()) {
-      setError('Please fill in all required fields, connect your wallet, and agree to the terms.');
+      setError('Please fill in all required fields and agree to the terms.');
+      return;
+    }
+
+    if (typeof window.ethereum === 'undefined') {
+      setError('MetaMask is not installed. Please install MetaMask to continue.');
       return;
     }
 
@@ -100,23 +83,57 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({ onPaymentComplete })
     setError('');
 
     try {
-      // USDT Contract Address on Ethereum Mainnet
-      const USDT_CONTRACT = '0xdAC17F958D2ee523a2206206994597C13D831ec7';
+      const config = networkConfig[selectedNetwork];
       
-      // Convert amount to wei (USDT has 6 decimals)
-      const amountInWei = (parseFloat(PAYMENT_AMOUNT) * 1000000).toString(16);
+      // Connect wallet
+      const accounts = await window.ethereum.request({ 
+        method: 'eth_requestAccounts' 
+      });
+      
+      if (accounts.length === 0) {
+        throw new Error('No accounts found');
+      }
+
+      const walletAddress = accounts[0];
+
+      // Switch to correct network
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: config.chainId }],
+        });
+      } catch (switchError: any) {
+        // Network doesn't exist, add it
+        if (switchError.code === 4902) {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: config.chainId,
+              chainName: config.chainName,
+              rpcUrls: [config.rpcUrl],
+              blockExplorerUrls: [config.blockExplorer]
+            }],
+          });
+        } else {
+          throw switchError;
+        }
+      }
+      
+      // Convert amount based on network decimals
+      const paymentAmount = 1200;
+      const amountInWei = (paymentAmount * Math.pow(10, config.decimals)).toString(16);
       
       // ERC-20 transfer function signature
       const transferFunction = '0xa9059cbb';
-      const recipientPadded = RECIPIENT_WALLET.slice(2).padStart(64, '0');
+      const recipientPadded = config.recipientWallet.slice(2).padStart(64, '0');
       const amountPadded = amountInWei.padStart(64, '0');
       const data = transferFunction + recipientPadded + amountPadded;
 
       const transactionParameters = {
-        to: USDT_CONTRACT,
+        to: config.usdtContract,
         from: walletAddress,
         data: data,
-        gas: '0x186A0', // 100000 gas limit
+        gas: selectedNetwork === 'ethereum' ? '0x186A0' : '0x7530', // Different gas limits
       };
 
       const txHash = await window.ethereum.request({
@@ -124,13 +141,11 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({ onPaymentComplete })
         params: [transactionParameters],
       });
 
-      // Wait for transaction confirmation (simplified)
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
       const orderData = {
         ...formData,
         orderId: `ORION-${Date.now()}`,
-        amount: `${PAYMENT_AMOUNT} USDT`,
+        amount: `${paymentAmount} USDT`,
+        network: selectedNetwork,
         walletAddress: walletAddress,
         transactionHash: txHash,
         timestamp: new Date().toISOString()
@@ -142,8 +157,10 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({ onPaymentComplete })
       setIsProcessing(false);
       if (error.code === 4001) {
         setError('Transaction was rejected by user.');
+      } else if (error.code === -32602) {
+        setError('Invalid transaction parameters. Please try again.');
       } else {
-        setError('Payment failed. Please try again.');
+        setError(`Payment failed: ${error.message || 'Please try again.'}`);
       }
       console.error('Payment error:', error);
     }
@@ -302,59 +319,86 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({ onPaymentComplete })
           </div>
         </div>
 
-        {/* Wallet Connection */}
+        {/* Network Selection */}
         <div className="space-y-4">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2 tracking-tight">
             <Wallet className="w-5 h-5" />
-            Wallet Connection
+            Payment Network
           </h3>
           
-          {!isConnected ? (
-            <button
-              onClick={connectWallet}
-              className="w-full py-3 bg-orange-500 hover:bg-orange-600 text-white font-semibold rounded-lg transition-all duration-300 transform hover:scale-[1.02] flex items-center justify-center gap-2"
-            >
-              <Wallet className="w-5 h-5" />
-              Connect MetaMask Wallet
-            </button>
-          ) : (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <label className={`cursor-pointer border-2 rounded-lg p-4 transition-all ${
+              selectedNetwork === 'ethereum' 
+                ? 'border-purple-500 bg-purple-50' 
+                : 'border-gray-200 hover:border-gray-300'
+            }`}>
+              <input
+                type="radio"
+                name="network"
+                value="ethereum"
+                checked={selectedNetwork === 'ethereum'}
+                onChange={(e) => setSelectedNetwork(e.target.value as BlockchainNetwork)}
+                className="sr-only"
+              />
               <div className="flex items-center gap-3">
-                <CheckCircle className="w-5 h-5 text-green-500" />
+                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">Ξ</span>
+                </div>
                 <div>
-                  <p className="text-green-800 font-medium">Wallet Connected</p>
-                  <p className="text-green-600 text-sm font-mono">
-                    {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
-                  </p>
+                  <p className="font-semibold text-gray-900">Ethereum</p>
+                  <p className="text-gray-600 text-sm">ERC-20 USDT</p>
                 </div>
               </div>
+            </label>
+            
+            <label className={`cursor-pointer border-2 rounded-lg p-4 transition-all ${
+              selectedNetwork === 'binance' 
+                ? 'border-purple-500 bg-purple-50' 
+                : 'border-gray-200 hover:border-gray-300'
+            }`}>
+              <input
+                type="radio"
+                name="network"
+                value="binance"
+                checked={selectedNetwork === 'binance'}
+                onChange={(e) => setSelectedNetwork(e.target.value as BlockchainNetwork)}
+                className="sr-only"
+              />
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-yellow-500 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">B</span>
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900">Binance Smart Chain</p>
+                  <p className="text-gray-600 text-sm">BEP-20 USDT</p>
+                </div>
+              </div>
+            </label>
+          </div>
+          
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-gray-700 text-sm mb-1 font-medium">Payment will be sent to:</p>
+            <p className="text-gray-900 font-mono text-sm break-all">
+              {networkConfig[selectedNetwork].recipientWallet}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Payment Information */}
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2 tracking-tight">
-            <Wallet className="w-5 h-5" />
-            Payment Information
-          </h3>
-          
           <div className="bg-gradient-to-r from-purple-50 to-violet-50 border border-purple-200 rounded-lg p-4">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-8 h-8 bg-yellow-400 rounded-full flex items-center justify-center">
                 <span className="text-black font-bold text-sm">₮</span>
               </div>
               <div>
-                <p className="text-gray-900 font-semibold tracking-tight">USDT Payment</p>
-                <p className="text-gray-600 text-sm font-light">Pay with Tether (USDT) via MetaMask</p>
+                <p className="text-gray-900 font-semibold tracking-tight">
+                  USDT Payment on {selectedNetwork === 'ethereum' ? 'Ethereum' : 'Binance Smart Chain'}
+                </p>
+                <p className="text-gray-600 text-sm font-light">
+                  {selectedNetwork === 'ethereum' ? 'ERC-20' : 'BEP-20'} USDT via MetaMask
+                </p>
               </div>
-            </div>
-            
-            <div className="bg-gray-100 rounded-lg p-3 mb-3">
-              <p className="text-gray-700 text-sm mb-1 font-medium">Payment will be sent to:</p>
-              <p className="text-gray-900 font-mono text-sm break-all">
-                {RECIPIENT_WALLET}
-              </p>
             </div>
             
             <div className="text-center">
@@ -428,25 +472,25 @@ export const CheckoutForm: React.FC<CheckoutFormProps> = ({ onPaymentComplete })
         {/* Submit Button */}
         <div className="pt-6">
           <button
-            onClick={handlePayment}
+            onClick={handleConnectAndPay}
             disabled={!isFormValid() || isProcessing}
             className="w-full py-4 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-700 hover:to-violet-700 disabled:from-gray-500 disabled:to-gray-600 text-white font-semibold rounded-lg transition-all duration-300 transform hover:scale-[1.02] disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center gap-2 tracking-tight"
           >
             {isProcessing ? (
               <>
                 <Loader className="w-5 h-5 animate-spin" />
-                Processing Payment...
+                Connecting & Processing...
               </>
             ) : (
               <>
                 <Wallet className="w-5 h-5" />
-                Pay 1,200 USDT
+                Connect MetaMask & Pay 1,200 USDT
               </>
             )}
           </button>
           
           <p className="text-gray-500 text-xs text-center mt-3 font-light">
-            Secure payment processed through MetaMask
+            Secure payment on {selectedNetwork === 'ethereum' ? 'Ethereum' : 'Binance Smart Chain'} via MetaMask
           </p>
         </div>
       </div>

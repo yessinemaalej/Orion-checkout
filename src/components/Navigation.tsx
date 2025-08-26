@@ -7,7 +7,7 @@ export const Navigation: React.FC = () => {
   const navItems = [
     { name: 'Technical Specs', href: '#specs', icon: <Settings className="w-4 h-4" /> },
     { name: 'Whitepaper', href: '#whitepaper', icon: <FileText className="w-4 h-4" /> },
-    { name: 'Roadmap', href: '#roadmap', icon: <Map className="w-4 h-4" /> },
+    { name: 'Roadmap', href: '/roadmap', icon: <Map className="w-4 h-4" /> },
     { name: 'FAQ', href: '#faq', icon: <HelpCircle className="w-4 h-4" /> },
   ];
 

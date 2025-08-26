@@ -3,10 +3,12 @@ import { ProductOverview } from './components/ProductOverview';
 import { CheckoutForm } from './components/CheckoutForm';
 import { ConfirmationModal } from './components/ConfirmationModal';
 import { Navigation } from './components/Navigation';
+import { RoadmapPage } from './components/RoadmapPage';
 
 function App() {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [orderData, setOrderData] = useState(null);
+  const [currentPage, setCurrentPage] = useState('home');
 
   const handlePaymentComplete = (data: any) => {
     setOrderData(data);
@@ -17,6 +19,11 @@ function App() {
     setShowConfirmation(false);
     setOrderData(null);
   };
+
+  // Simple routing logic
+  if (window.location.pathname === '/roadmap' || currentPage === 'roadmap') {
+    return <RoadmapPage />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 relative overflow-hidden">
